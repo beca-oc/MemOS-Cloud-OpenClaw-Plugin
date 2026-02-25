@@ -8,47 +8,222 @@
   "configSchema": {
     "type": "object",
     "properties": {
-      "baseUrl": { "type": "string", "description": "MemOS Cloud base URL" },
-      "apiKey": { "type": "string", "description": "MemOS API Key (Token auth; supports ~/.openclaw/.env, ~/.moltbot/.env, ~/.clawdbot/.env; falls back to process env)" },
-      "userId": { "type": "string", "description": "MemOS user_id (default: openclaw-user)", "default": "openclaw-user" },
-      "conversationId": { "type": "string", "description": "Override conversation_id" },
-      "conversationIdPrefix": { "type": "string", "description": "conversation_id prefix" },
-      "conversationIdSuffix": { "type": "string", "description": "conversation_id suffix" },
+      "baseUrl": {
+        "type": "string",
+        "description": "MemOS Cloud base URL"
+      },
+      "readBaseUrl": {
+        "type": "string",
+        "description": "Optional read endpoint (e.g. local MemOS read replica)"
+      },
+      "writeBaseUrl": {
+        "type": "string",
+        "description": "Optional write endpoint (defaults to baseUrl)"
+      },
+      "apiKey": {
+        "type": "string",
+        "description": "MemOS API Key (Token auth; supports ~/.openclaw/.env, ~/.moltbot/.env, ~/.clawdbot/.env; falls back to process env)"
+      },
+      "userId": {
+        "type": "string",
+        "description": "MemOS user_id (default: openclaw-user)",
+        "default": "openclaw-user"
+      },
+      "conversationId": {
+        "type": "string",
+        "description": "Override conversation_id"
+      },
+      "conversationIdPrefix": {
+        "type": "string",
+        "description": "conversation_id prefix"
+      },
+      "conversationIdSuffix": {
+        "type": "string",
+        "description": "conversation_id suffix"
+      },
       "conversationSuffixMode": {
         "type": "string",
-        "enum": ["none", "counter"],
+        "enum": [
+          "none",
+          "counter"
+        ],
         "default": "none"
       },
-      "resetOnNew": { "type": "boolean", "default": true },
-      "queryPrefix": { "type": "string", "description": "Prefix added to search queries" },
-      "maxQueryChars": { "type": "integer", "description": "Max chars for search query" },
-      "recallEnabled": { "type": "boolean", "default": true },
-      "recallGlobal": { "type": "boolean", "default": true },
-      "addEnabled": { "type": "boolean", "default": true },
+      "resetOnNew": {
+        "type": "boolean",
+        "default": true
+      },
+      "queryPrefix": {
+        "type": "string",
+        "description": "Prefix added to search queries"
+      },
+      "maxQueryChars": {
+        "type": "integer",
+        "description": "Max chars for search query"
+      },
+      "maxRecallItemChars": {
+        "type": "integer",
+        "description": "Max chars per recalled memory/preference item in prepended prompt",
+        "default": 220
+      },
+      "maxPromptChars": {
+        "type": "integer",
+        "description": "Hard max chars for full prepended recall prompt block",
+        "default": 3600
+      },
+      "recallEnabled": {
+        "type": "boolean",
+        "default": true
+      },
+      "recallGlobal": {
+        "type": "boolean",
+        "default": true
+      },
+      "addEnabled": {
+        "type": "boolean",
+        "default": false
+      },
+      "capturePolicy": {
+        "type": "string",
+        "enum": [
+          "disabled",
+          "explicit",
+          "legacy"
+        ],
+        "default": "disabled"
+      },
+      "capturePrefix": {
+        "type": "string",
+        "description": "Required prefix when capturePolicy=explicit",
+        "default": "MEMORY:"
+      },
+      "enforceQualityGate": {
+        "type": "boolean",
+        "default": true
+      },
+      "minFactChars": {
+        "type": "integer",
+        "default": 25
+      },
+      "maxFactChars": {
+        "type": "integer",
+        "default": 500
+      },
       "captureStrategy": {
         "type": "string",
-        "enum": ["last_turn", "full_session"],
+        "enum": [
+          "last_turn",
+          "full_session"
+        ],
         "default": "last_turn"
       },
-      "maxMessageChars": { "type": "integer", "description": "Max chars per message when adding", "default": 20000 },
-      "includeAssistant": { "type": "boolean", "default": true },
-      "memoryLimitNumber": { "type": "integer", "default": 6 },
-      "preferenceLimitNumber": { "type": "integer", "default": 6 },
-      "includePreference": { "type": "boolean", "default": true },
-      "includeToolMemory": { "type": "boolean", "default": false },
-      "toolMemoryLimitNumber": { "type": "integer", "default": 6 },
-      "filter": { "type": "object", "description": "MemOS search filter" },
-      "knowledgebaseIds": { "type": "array", "items": { "type": "string" } },
-      "tags": { "type": "array", "items": { "type": "string" } },
-      "info": { "type": "object", "additionalProperties": true },
-      "agentId": { "type": "string" },
-      "appId": { "type": "string" },
-      "allowPublic": { "type": "boolean", "default": false },
-      "allowKnowledgebaseIds": { "type": "array", "items": { "type": "string" } },
-      "asyncMode": { "type": "boolean", "default": true },
-      "timeoutMs": { "type": "integer", "default": 5000 },
-      "retries": { "type": "integer", "default": 1 },
-      "throttleMs": { "type": "integer", "default": 0 }
+      "maxMessageChars": {
+        "type": "integer",
+        "description": "Max chars per message when adding",
+        "default": 20000
+      },
+      "includeAssistant": {
+        "type": "boolean",
+        "default": false
+      },
+      "memoryLimitNumber": {
+        "type": "integer",
+        "default": 6
+      },
+      "preferenceLimitNumber": {
+        "type": "integer",
+        "default": 6
+      },
+      "includePreference": {
+        "type": "boolean",
+        "default": true
+      },
+      "includeToolMemory": {
+        "type": "boolean",
+        "default": false
+      },
+      "toolMemoryLimitNumber": {
+        "type": "integer",
+        "default": 6
+      },
+      "filter": {
+        "type": "object",
+        "description": "MemOS search filter"
+      },
+      "knowledgebaseIds": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "tags": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "info": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "agentId": {
+        "type": "string"
+      },
+      "appId": {
+        "type": "string"
+      },
+      "allowPublic": {
+        "type": "boolean",
+        "default": false
+      },
+      "allowKnowledgebaseIds": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "asyncMode": {
+        "type": "boolean",
+        "default": true
+      },
+      "timeoutMs": {
+        "type": "integer",
+        "default": 5000
+      },
+      "retries": {
+        "type": "integer",
+        "default": 1
+      },
+      "throttleMs": {
+        "type": "integer",
+        "default": 0
+      },
+      "localMode": {
+        "type": "boolean",
+        "description": "Use local MemOS instance (no API key needed)",
+        "default": false
+      },
+      "readableCubeIds": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Cube IDs to search during recall (localMode). Defaults to [userId] if empty."
+      },
+      "writableCubeIds": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Cube IDs to write to during add (localMode). Defaults to [userId] if empty."
+      },
+      "cubeRouting": {
+        "type": "object",
+        "description": "Map of pattern\u2192cubeId for agent write routing. Keys matched against sessionKey/agentId/label.",
+        "additionalProperties": {
+          "type": "string"
+        }
+      }
     },
     "additionalProperties": false
   }

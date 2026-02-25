@@ -38,6 +38,36 @@ function stripPrependedPrompt(content) {
   return content.slice(idx + USER_QUERY_MARKER.length).trimStart();
 }
 
+const LOW_VALUE_PATTERNS = [
+  /conversation info \(untrusted metadata\)/i,
+  /^you there\??$/i,
+  /\b(tdd[-_ ]?test|ksync-probe|memos-health-probe|health[_ -]?test)\b/i,
+  /^on [a-z]+ \d{1,2}, \d{4}, (the assistant|the user)\b/i,
+  /\bthe assistant (acknowledged|informed|provided|suggested|introduced|explained|confirmed)\b/i,
+];
+
+function normalizeWhitespace(text) {
+  return String(text || "").replace(/\s+/g, " ").trim();
+}
+
+function extractCapturableFact(content, cfg) {
+  let text = normalizeWhitespace(content);
+  if (!text) return "";
+
+  if (cfg.capturePolicy === "explicit") {
+    const prefix = String(cfg.capturePrefix || "MEMORY:");
+    if (!text.toUpperCase().startsWith(prefix.toUpperCase())) return "";
+    text = normalizeWhitespace(text.slice(prefix.length));
+  }
+
+  if (!text) return "";
+  if (cfg.enforceQualityGate) {
+    if (text.length < cfg.minFactChars) return "";
+    if (LOW_VALUE_PATTERNS.some((pattern) => pattern.test(text))) return "";
+  }
+  return truncate(text, Math.min(cfg.maxMessageChars, cfg.maxFactChars));
+}
+
 function getCounterSuffix(sessionKey) {
   if (!sessionKey) return "";
   const current = conversationCounters.get(sessionKey) ?? 0;
@@ -74,6 +104,11 @@ function buildSearchPayload(cfg, prompt, ctx) {
     source: MEMOS_SOURCE,
   };
 
+  // Local mode needs explicit cube targeting; use configured list or fall back to userId
+  if (cfg.localMode) {
+    payload.readable_cube_ids = cfg.readableCubeIds?.length ? cfg.readableCubeIds : [cfg.userId];
+  }
+
   if (!cfg.recallGlobal) {
     const conversationId = resolveConversationId(cfg, ctx);
     if (conversationId) payload.conversation_id = conversationId;
@@ -91,6 +126,38 @@ function buildSearchPayload(cfg, prompt, ctx) {
   return payload;
 }
 
+function resolveWritableCubes(cfg, ctx) {
+  // Agent identity routing: map session/agent identity to the correct cube
+  // Convention: if sessionKey or agentId contains an agent name, route to that cube
+  const cubeRouting = cfg.cubeRouting ?? {};
+  const sessionKey = ctx?.sessionKey ?? "";
+  const agentId = ctx?.agentId ?? "";
+  const label = ctx?.label ?? "";
+
+  // Check explicit routing map first (config-driven)
+  // e.g., cubeRouting: { "tycho": "tycho", "socrates": "socrates", ... }
+  for (const [pattern, cubeId] of Object.entries(cubeRouting)) {
+    if (sessionKey.includes(pattern) || agentId.includes(pattern) || label.includes(pattern)) {
+      return [cubeId];
+    }
+  }
+
+  // Convention-based routing: check if session/agent matches a known agent name
+  // NOTE: beca must be listed first — it's the orchestrator and falls through without it
+  const knownAgents = ["beca", "tycho", "socrates", "watts", "erdos", "diogenes"];
+  const searchStr = `${sessionKey}:${agentId}:${label}`.toLowerCase();
+  for (const agent of knownAgents) {
+    if (searchStr.includes(agent)) {
+      return [agent];
+    }
+  }
+
+  // Default: use agentCubeIds only — never fall through to voc-* cubes
+  // agentCubeIds is the safe fallback; vocCubeIds are only written via explicit stakeholder_memory.py calls
+  const agentCubes = cfg.agentCubeIds?.length ? cfg.agentCubeIds : cfg.writableCubeIds?.filter(id => !id.startsWith("voc-"));
+  return agentCubes?.length ? agentCubes : [cfg.userId];
+}
+
 function buildAddMessagePayload(cfg, messages, ctx) {
   const payload = {
     user_id: cfg.userId,
@@ -99,21 +166,29 @@ function buildAddMessagePayload(cfg, messages, ctx) {
     source: MEMOS_SOURCE,
   };
 
+  // Local mode needs explicit cube targeting; route based on agent identity
+  if (cfg.localMode) {
+    payload.writable_cube_ids = resolveWritableCubes(cfg, ctx);
+  }
+
   if (cfg.agentId) payload.agent_id = cfg.agentId;
   if (cfg.appId) payload.app_id = cfg.appId;
   if (cfg.tags?.length) payload.tags = cfg.tags;
 
-  const info = {
-    source: "openclaw",
-    sessionKey: ctx?.sessionKey,
-    agentId: ctx?.agentId,
-    ...(cfg.info || {}),
-  };
-  if (Object.keys(info).length > 0) payload.info = info;
+  if (cfg.includeInfo === true) {
+    const info = {
+      source: "openclaw",
+      sessionKey: ctx?.sessionKey,
+      agentId: ctx?.agentId,
+      ...(cfg.info || {}),
+    };
+    if (Object.keys(info).length > 0) payload.info = info;
+  }
 
   payload.allow_public = cfg.allowPublic;
   if (cfg.allowKnowledgebaseIds?.length) payload.allow_knowledgebase_ids = cfg.allowKnowledgebaseIds;
-  payload.async_mode = cfg.asyncMode;
+  // MemOS API expects "sync" or "async" (string), OpenClaw config uses boolean
+  payload.async_mode = cfg.asyncMode === false ? "sync" : cfg.asyncMode === true ? "async" : (cfg.asyncMode || "async");
 
   return payload;
 }
@@ -134,10 +209,11 @@ function pickLastTurnMessages(messages, cfg) {
     if (!msg || !msg.role) continue;
     if (msg.role === "user") {
       const content = stripPrependedPrompt(extractText(msg.content));
-      if (content) results.push({ role: "user", content: truncate(content, cfg.maxMessageChars) });
+      const fact = extractCapturableFact(content, cfg);
+      if (fact) results.push({ role: "user", content: fact });
       continue;
     }
-    if (msg.role === "assistant" && cfg.includeAssistant) {
+    if (msg.role === "assistant" && cfg.includeAssistant && cfg.capturePolicy === "legacy") {
       const content = extractText(msg.content);
       if (content) results.push({ role: "assistant", content: truncate(content, cfg.maxMessageChars) });
     }
@@ -152,9 +228,10 @@ function pickFullSessionMessages(messages, cfg) {
     if (!msg || !msg.role) continue;
     if (msg.role === "user") {
       const content = stripPrependedPrompt(extractText(msg.content));
-      if (content) results.push({ role: "user", content: truncate(content, cfg.maxMessageChars) });
+      const fact = extractCapturableFact(content, cfg);
+      if (fact) results.push({ role: "user", content: fact });
     }
-    if (msg.role === "assistant" && cfg.includeAssistant) {
+    if (msg.role === "assistant" && cfg.includeAssistant && cfg.capturePolicy === "legacy") {
       const content = extractText(msg.content);
       if (content) results.push({ role: "assistant", content: truncate(content, cfg.maxMessageChars) });
     }
@@ -166,6 +243,34 @@ function truncate(text, maxLen) {
   if (!text) return "";
   if (!maxLen) return text;
   return text.length > maxLen ? `${text.slice(0, maxLen)}...` : text;
+}
+
+function hardCap(text, maxChars) {
+  if (!text) return "";
+  if (!Number.isFinite(maxChars) || maxChars <= 0) return text;
+  return text.length > maxChars ? text.slice(0, maxChars) : text;
+}
+
+export function truncatePromptBlock(promptBlock, maxChars) {
+  if (!promptBlock) return "";
+  if (!Number.isFinite(maxChars) || maxChars <= 0 || promptBlock.length <= maxChars) return promptBlock;
+
+  const marker = USER_QUERY_MARKER;
+  const idx = promptBlock.lastIndexOf(marker);
+  if (idx === -1) return hardCap(promptBlock, maxChars);
+
+  const head = promptBlock.slice(0, idx);
+  const tail = promptBlock.slice(idx);
+  if (tail.length >= maxChars) return hardCap(tail, maxChars);
+
+  const availableForHead = maxChars - tail.length;
+  if (head.length <= availableForHead) return `${head}${tail}`;
+
+  const notice = "\n...[truncated]\n";
+  if (notice.length >= availableForHead) return `${head.slice(0, availableForHead)}${tail}`;
+
+  const headBudget = availableForHead - notice.length;
+  return `${head.slice(0, headBudget)}${notice}${tail}`;
 }
 
 export default {
@@ -204,7 +309,7 @@ export default {
     api.on("before_agent_start", async (event, ctx) => {
       if (!cfg.recallEnabled) return;
       if (!event?.prompt || event.prompt.length < 3) return;
-      if (!cfg.apiKey) {
+      if (!cfg.apiKey && !cfg.localMode) {
         warnMissingApiKey(log, "recall");
         return;
       }
@@ -212,11 +317,17 @@ export default {
       try {
         const payload = buildSearchPayload(cfg, event.prompt, ctx);
         const result = await searchMemory(cfg, payload);
-        const promptBlock = formatPromptBlock(result, { wrapTagBlocks: true });
+        const promptBlock = formatPromptBlock(result, {
+          wrapTagBlocks: true,
+          maxItemChars: cfg.maxRecallItemChars,
+        });
         if (!promptBlock) return;
 
+        const boundedPromptBlock = truncatePromptBlock(promptBlock, cfg.maxPromptChars);
+        if (!boundedPromptBlock) return;
+
         return {
-          prependContext: promptBlock,
+          prependContext: boundedPromptBlock,
         };
       } catch (err) {
         log.warn?.(`[memos-cloud] recall failed: ${String(err)}`);
@@ -225,8 +336,9 @@ export default {
 
     api.on("agent_end", async (event, ctx) => {
       if (!cfg.addEnabled) return;
+      if (cfg.capturePolicy === "disabled") return;
       if (!event?.success || !event?.messages?.length) return;
-      if (!cfg.apiKey) {
+      if (!cfg.apiKey && !cfg.localMode) {
         warnMissingApiKey(log, "add");
         return;
       }
@@ -246,7 +358,11 @@ export default {
         if (!messages.length) return;
 
         const payload = buildAddMessagePayload(cfg, messages, ctx);
-        await addMessage(cfg, payload);
+        // Sync writes take ~30s (MemReader). Async with Redis: ~300ms. Adjust timeout accordingly.
+        const addCfg = payload.async_mode === "sync"
+          ? { ...cfg, timeoutMs: Math.max(cfg.timeoutMs, 60000) }
+          : { ...cfg, timeoutMs: Math.max(cfg.timeoutMs, 5000) };
+        await addMessage(addCfg, payload);
       } catch (err) {
         log.warn?.(`[memos-cloud] add failed: ${String(err)}`);
       }
