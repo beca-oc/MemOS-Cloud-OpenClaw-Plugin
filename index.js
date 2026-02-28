@@ -38,12 +38,31 @@ function stripPrependedPrompt(content) {
   return content.slice(idx + USER_QUERY_MARKER.length).trimStart();
 }
 
+// Noise blocklist — synced with scripts/memory_gate.py NOISE patterns.
+// If you add a pattern here, add it to memory_gate.py too.
+// Source of truth: context/MEMORY-WRITE-CONTRACT.md
 const LOW_VALUE_PATTERNS = [
+  // Original patterns
   /conversation info \(untrusted metadata\)/i,
   /^you there\??$/i,
+  // Test probes and health checks
   /\b(tdd[-_ ]?test|ksync-probe|memos-health-probe|health[_ -]?test)\b/i,
-  /^on [a-z]+ \d{1,2}, \d{4}, (the assistant|the user)\b/i,
-  /\bthe assistant (acknowledged|informed|provided|suggested|introduced|explained|confirmed)\b/i,
+  /\btest[-_ ]?[a-f0-9]{8}\b/i,
+  /\b(speed test|heartbeat test|health[-_ ]?check|health[-_ ]?probe)\b/i,
+  // AI self-summaries (MemReader meta-artifacts)
+  /^on [a-z]+ \d{1,2},? \d{4},? (the assistant|the user)\b/i,
+  /\bthe assistant (acknowledged|informed|provided|suggested|introduced|explained|confirmed|recommended|noted)\b/i,
+  /\bmemory document reference\b/i,
+  /\btype of memory related to\b/i,
+  // MemReader domain/salience artifacts
+  /\bthe salience (rating|level|score) (for|of|is)\b/i,
+  /\bthe (rule|standing rule) (falls under|pertains to) the domain\b/i,
+  /\bthis (information|entry|rule) (is )?(categorized|pertains|relates)\b/i,
+  /\bthe domain (associated with|relevant to|for)\b/i,
+  /\bthe source (of the|is noted as)\b/i,
+  /\bthe (date|data|lesson|record|information) (is )?(associated with|recorded on)\b/i,
+  // Trivial responses
+  /^(ok|yes|no|done|thanks|noted|sure|got it)\.?$/i,
 ];
 
 function normalizeWhitespace(text) {
