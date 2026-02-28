@@ -306,6 +306,11 @@ export default {
       );
     }
 
+    // Recall dedup: skip if same prompt was just recalled within 5 seconds
+    let lastRecallPrompt = "";
+    let lastRecallTime = 0;
+    const RECALL_DEDUP_MS = 5000;
+
     api.on("before_agent_start", async (event, ctx) => {
       if (!cfg.recallEnabled) return;
       if (!event?.prompt || event.prompt.length < 3) return;
@@ -313,6 +318,16 @@ export default {
         warnMissingApiKey(log, "recall");
         return;
       }
+
+      // Dedup: skip if identical prompt was recalled recently
+      const now = Date.now();
+      const promptKey = event.prompt.slice(0, 200);
+      if (promptKey === lastRecallPrompt && now - lastRecallTime < RECALL_DEDUP_MS) {
+        log.info?.("[memos-cloud] recall skipped (dedup: same prompt within 5s)");
+        return;
+      }
+      lastRecallPrompt = promptKey;
+      lastRecallTime = now;
 
       try {
         const payload = buildSearchPayload(cfg, event.prompt, ctx);
